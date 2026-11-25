@@ -19,8 +19,13 @@ empties walks out and costs you a star; lose three stars, or run out the
 shift clock, and the shift is over.
 
 - **Controls:** mouse or keyboard — 1–7 add ingredients, Enter serves,
-  Backspace takes a layer back, X (or the trash can) throws the plate away,
-  P pauses.
+  Backspace, a right-click or the UNDO button takes the top layer back (the
+  mistake recovery: it costs nothing but time), X (or the trash can) throws
+  the plate away, P pauses.
+- **Orders:** tickets sometimes spell out a special request — DOUBLE PATTY,
+  NO CHEESE — and the last 30 seconds are RUSH TIME, when orders arrive
+  faster. Serve an exact burger while the customer is still fresh for a
+  PERFECT!; the end screen reports your accuracy and perfect count.
 - **Difficulty:** recipes grow from 3 to 7 layers and patience shrinks as the
   shift goes on.
 - **Sound:** small synthesized WebAudio blips; no audio files.

@@ -45,9 +45,18 @@ export const DIFFICULTY = [
  * Money: a flat price per layer, plus a tip that fades as patience runs out.
  * The top tip is generous on purpose: serving a fresh ticket fast should
  * visibly out-earn serving it at the last second, so speed feels rewarded
- * long before the combo bonus starts to matter.
+ * long before the combo bonus starts to matter. A serve that still has at
+ * least `perfectFraction` of its patience left also earns a PERFECT! cheer.
  */
-export const PRICE = { perLayer: 14, base: 12, maxTip: 38 };
+export const PRICE = { perLayer: 14, base: 12, maxTip: 38, perfectFraction: 0.6 };
+
+/**
+ * Rush time: once the shift clock drops to `at` seconds left, orders start
+ * arriving faster (`spawnFactor` multiplies the usual gap) and the kitchen
+ * says so in big letters, so the last stretch feels like a rush rather than
+ * just more of the same.
+ */
+export const RUSH = { at: 30, spawnFactor: 0.68 };
 
 export const PALETTE = {
   wall: '#f3e2c7',
@@ -97,6 +106,7 @@ export const LAYOUT = {
   plate: { cx: 640, baseY: 618, width: 216 },
   bell: { cx: 1136, cy: 540, r: 52 },
   trash: { x: 66, y: 486, width: 108, height: 108 },
+  undo: { x: 300, y: 524, width: 148, height: 58 },
   bins: { x: 32, y: 640, width: 168, height: 66, gap: 8 },
   timerBar: { x: 0, y: 0, width: 1280, height: 14 },
 };

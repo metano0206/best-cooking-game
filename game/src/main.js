@@ -2,7 +2,8 @@
 // however fast the display runs; the renderer paints what is there. The
 // player stacks a burger by clicking the ingredient bins (or pressing 1-7),
 // rings the bell to serve it (click or Enter), takes a layer back with
-// Backspace, and throws the plate away with X or the trash can. Little
+// Backspace, a right-click or the UNDO button, and throws the plate away
+// with X or the trash can. Little
 // synthesized WebAudio blips — no audio files — mark each of those.
 //
 // ?seed=N fixes the order pattern. ?shot=start|play|end (with &seed=N)
@@ -29,13 +30,14 @@ const renderer = createRenderer(canvas);
 
 // --- Tiny synthesized sounds (created lazily, after the first gesture). ---
 let audio = null;
-function blip(freq, seconds, type = 'square', gain = 0.05) {
+function blip(freq, seconds, type = 'square', gain = 0.05, freqEnd = null) {
   try {
     audio ??= new (window.AudioContext || window.webkitAudioContext)();
     const osc = audio.createOscillator();
     const amp = audio.createGain();
     osc.type = type;
-    osc.frequency.value = freq;
+    osc.frequency.setValueAtTime(freq, audio.currentTime);
+    if (freqEnd) osc.frequency.exponentialRampToValueAtTime(freqEnd, audio.currentTime + seconds);
     amp.gain.setValueAtTime(gain, audio.currentTime);
     amp.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + seconds);
     osc.connect(amp).connect(audio.destination);
@@ -45,8 +47,26 @@ function blip(freq, seconds, type = 'square', gain = 0.05) {
     // No audio in this browser: the game plays silently, as it should.
   }
 }
+/**
+ * Each ingredient lands with its own little voice: the patty sizzles low
+ * and falling, cheese settles soft, lettuce crisps high and short, the buns
+ * thud. All synthesized — pitch, glide, wave and length per ingredient.
+ */
+const ADD_SOUNDS = {
+  bunB: { f: 175, f2: 120, s: 0.09, type: 'triangle', g: 0.07 },
+  patty: { f: 140, f2: 58, s: 0.17, type: 'sawtooth', g: 0.045 },
+  cheese: { f: 520, f2: 430, s: 0.08, type: 'sine', g: 0.06 },
+  lettuce: { f: 780, f2: 620, s: 0.06, type: 'triangle', g: 0.05 },
+  tomato: { f: 340, f2: 255, s: 0.09, type: 'sine', g: 0.07 },
+  onion: { f: 880, f2: 990, s: 0.07, type: 'square', g: 0.032 },
+  bunT: { f: 205, f2: 150, s: 0.1, type: 'triangle', g: 0.07 },
+};
 const sounds = {
-  add: (layer) => blip(320 + layer * 45, 0.07),
+  add: (id) => {
+    const sound = ADD_SOUNDS[id] ?? ADD_SOUNDS.bunB;
+    blip(sound.f, sound.s, sound.type, sound.g, sound.f2);
+  },
+  undo: () => blip(300, 0.07, 'square', 0.04, 190),
   serve: () => { blip(660, 0.1, 'triangle', 0.07); setTimeout(() => blip(880, 0.14, 'triangle', 0.07), 80); },
   wrong: () => blip(140, 0.18, 'sawtooth', 0.05),
   walkout: () => blip(196, 0.22, 'sawtooth', 0.05),
@@ -119,7 +139,14 @@ function runGame() {
   }
 
   function doAdd(id) {
-    if (world.addIngredient(id)) sounds.add(world.state.plate.length);
+    if (world.addIngredient(id)) sounds.add(id);
+  }
+
+  function doUndo() {
+    if (world.state.plate.length === 0) return;
+    world.undo();
+    sounds.undo();
+    announce('Took the top layer back off the plate.');
   }
 
   function handleEvents(events) {
@@ -157,9 +184,17 @@ function runGame() {
       world.trash();
       sounds.trash();
     }
+    // The UNDO button takes the top layer back.
+    if (pointIn(x, y, LAYOUT.undo)) doUndo();
   }
 
   canvas.addEventListener('pointerdown', (event) => onTap(event.clientX, event.clientY));
+
+  // Right-click is the other undo: take the top layer back, no menu.
+  canvas.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    if (screen === SCREEN_PLAY) doUndo();
+  });
 
   window.addEventListener('keydown', (event) => {
     if (event.repeat) return;
@@ -178,7 +213,7 @@ function runGame() {
     if (ingredient) doAdd(ingredient.id);
     else if (key === 'Enter' || key === ' ') doServe();
     else if (key === 'Backspace') {
-      world.undo();
+      doUndo();
       event.preventDefault();
     } else if (key === 'x' || key === 'X') {
       world.trash();

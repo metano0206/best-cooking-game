@@ -6,7 +6,7 @@
 // Title, pause and game-over screens are drawn over the same kitchen, so a
 // screenshot of any screen still shows the game it belongs to.
 
-import { FIELD, FONT, INGREDIENTS, LAYER_STYLE, LAYOUT, PALETTE } from './config.js';
+import { FIELD, FONT, INGREDIENTS, LAYER_STYLE, LAYOUT, PALETTE, RUSH } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
@@ -31,10 +31,15 @@ function hash(n) {
   return x - Math.floor(x);
 }
 
-/** One burger layer centred at `cx`, its bottom edge at `baseY`. Returns its height. */
-function drawLayer(ctx, id, cx, baseY, width) {
+/**
+ * One burger layer centred at `cx`, its bottom edge at `baseY`. Returns its
+ * height. `squash` (1 = at rest) squashes the layer vertically and bulges it
+ * a little sideways — the landing wobble of a freshly dropped ingredient.
+ */
+function drawLayer(ctx, id, cx, baseY, width, squash = 1) {
   const style = LAYER_STYLE[id];
-  const h = style.height * (width / 216);
+  const h = style.height * (width / 216) * squash;
+  width *= 1 + (1 - squash) * 0.22;
   const x = cx - width / 2;
   const y = baseY - h;
   ctx.fillStyle = style.fill;
@@ -112,8 +117,12 @@ function drawLayer(ctx, id, cx, baseY, width) {
   return h;
 }
 
-/** A whole stack of layers on a plate: the plate first, then bottom layer up. */
-function drawBurger(ctx, layers, cx, baseY, width) {
+/**
+ * A whole stack of layers on a plate: the plate first, then bottom layer up.
+ * `pop` (0..1) is the landing squash of the topmost layer, fresh from the
+ * world; tickets pass 0 and sit still.
+ */
+function drawBurger(ctx, layers, cx, baseY, width, pop = 0) {
   ctx.fillStyle = PALETTE.plateShade;
   ctx.beginPath();
   ctx.ellipse(cx, baseY + 8, width * 0.62, 13, 0, 0, Math.PI * 2);
@@ -123,7 +132,10 @@ function drawBurger(ctx, layers, cx, baseY, width) {
   ctx.ellipse(cx, baseY + 3, width * 0.62, 12, 0, 0, Math.PI * 2);
   ctx.fill();
   let y = baseY;
-  for (const layer of layers) y -= drawLayer(ctx, layer, cx, y, width);
+  layers.forEach((layer, index) => {
+    const squash = index === layers.length - 1 && pop > 0 ? 1 - 0.3 * pop : 1;
+    y -= drawLayer(ctx, layer, cx, y, width, squash);
+  });
   return y;
 }
 
@@ -150,10 +162,17 @@ function drawTicket(ctx, order, x, y) {
   ctx.fillStyle = PALETTE.ink;
   ctx.font = `700 25px ${FONT}`;
   ctx.textAlign = 'left';
-  ctx.fillText('BURGER', x + 122, y + 46);
+  ctx.fillText('BURGER', x + 122, y + 44);
   ctx.font = `600 21px ${FONT}`;
   ctx.fillStyle = PALETTE.mutedInk;
-  ctx.fillText(`${order.recipe.length} layers`, x + 122, y + 76);
+  ctx.fillText(`${order.recipe.length} layers`, x + 122, y + 70);
+  // A special request (DOUBLE PATTY, NO CHEESE…) is spelled out in red, so
+  // the ticket reads as more than just its little stack of layers.
+  if (order.note) {
+    ctx.font = `800 17px ${FONT}`;
+    ctx.fillStyle = PALETTE.red;
+    ctx.fillText(order.note, x + 122, y + 94);
+  }
   ctx.fillStyle = PALETTE.ink;
   ctx.font = `800 30px ${FONT}`;
   ctx.fillText(`$${order.price}`, x + 268, y + 48);
@@ -280,6 +299,23 @@ function drawKitchen(ctx, state) {
   ctx.font = `800 20px ${FONT}`;
   ctx.fillText('SERVE!', bell.cx, bell.cy + bell.r + 34);
 
+  // The UNDO button: take the top layer back off the plate (the mistake
+  // recovery; Backspace and right-click do the same).
+  const undoBox = LAYOUT.undo;
+  ctx.fillStyle = '#fff8e7';
+  roundRect(ctx, undoBox.x, undoBox.y, undoBox.width, undoBox.height, 10);
+  ctx.fill();
+  ctx.strokeStyle = PALETTE.board;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = `800 21px ${FONT}`;
+  ctx.textAlign = 'center';
+  ctx.fillText('UNDO', undoBox.x + undoBox.width / 2, undoBox.y + 27);
+  ctx.font = `600 13px ${FONT}`;
+  ctx.fillStyle = PALETTE.mutedInk;
+  ctx.fillText('top layer back', undoBox.x + undoBox.width / 2, undoBox.y + 47);
+
   // The plate being built, centre counter.
   if (state.plate.length === 0) {
     drawBurger(ctx, [], LAYOUT.plate.cx, LAYOUT.plate.baseY, LAYOUT.plate.width);
@@ -287,7 +323,7 @@ function drawKitchen(ctx, state) {
     ctx.font = `600 20px ${FONT}`;
     ctx.fillText('Click ingredients to stack a burger', LAYOUT.plate.cx, 452);
   } else {
-    drawBurger(ctx, state.plate, LAYOUT.plate.cx, LAYOUT.plate.baseY, LAYOUT.plate.width);
+    drawBurger(ctx, state.plate, LAYOUT.plate.cx, LAYOUT.plate.baseY, LAYOUT.plate.width, state.platePop);
   }
 
   drawBins(ctx);
@@ -426,22 +462,37 @@ export function createRenderer(canvas) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(scale, 0, 0, scale, offsetX, offsetY);
     drawKitchen(ctx, state);
+    // Rush time: a pulsing banner over the counter for the last stretch of
+    // the shift, while the orders arrive faster (see world.js).
+    if (screen === SCREEN_PLAY && !state.over && state.shiftLeft <= RUSH.at && state.shiftLeft > 0) {
+      const pulse = 0.78 + 0.22 * Math.sin(state.elapsed * 7);
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = PALETTE.red;
+      roundRect(ctx, FIELD.width / 2 - 175, 226, 350, 54, 12);
+      ctx.fill();
+      ctx.fillStyle = '#fff8e7';
+      ctx.font = `800 31px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.fillText('RUSH TIME!', FIELD.width / 2, 264);
+      ctx.globalAlpha = 1;
+    }
     if (screen === SCREEN_TITLE) {
       drawCentredPanel(ctx, 'SIZZLE & STACK', [
         'Build each burger to match its ticket,',
         'then ring the bell to serve it.',
         'Click ingredients (or press 1-7), Enter to serve,',
-        'Backspace to undo, X to trash the plate.',
+        'Backspace or right-click to undo, X to trash.',
         '',
         'Click or press Enter to start the shift!',
       ], PALETTE.gold);
     } else if (screen === SCREEN_PAUSED) {
       drawCentredPanel(ctx, 'PAUSED', ['The kitchen waits.', '', 'Press P or click to carry on.'], PALETTE.board);
     } else if (screen === SCREEN_OVER) {
+      const accuracy = state.attempts > 0 ? Math.round((state.served / state.attempts) * 100) : 100;
       drawCentredPanel(ctx, 'SHIFT OVER!', [
         `You earned $${state.score} and served ${state.served} burgers.`,
-        `Best combo: x${state.bestCombo}`,
-        `Best ever: $${Math.max(best, state.score)}`,
+        `Accuracy: ${accuracy}% (${state.served} of ${state.attempts}) · Perfect: ${state.perfects}`,
+        `Best combo: x${state.bestCombo} · Best ever: $${Math.max(best, state.score)}`,
         '',
         'Click or press Enter to work another shift!',
       ], PALETTE.red);

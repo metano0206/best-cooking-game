@@ -25,13 +25,15 @@ export function stageShot(name, world) {
     world.spawnOrder();
     const ticket = state.orders[0];
     for (const layer of ticket.recipe.slice(0, 3)) world.addIngredient(layer);
+    state.platePop = 0; // A still frame: the landing squash has settled.
     state.score = 340;
     state.served = 3;
     state.combo = 2;
     state.bestCombo = 3;
     state.orders[0].patience = state.orders[0].patienceMax * 0.55;
     if (state.orders[1]) state.orders[1].patience = state.orders[1].patienceMax * 0.85;
-    state.fx.push({ text: '+$96', x: 640, y: 300, colour: '#4d9e57', ttl: 5 });
+    // The serve above left its own fx behind (PERFECT!, the gain, the tip
+    // note) at well-spaced heights; they stay as they are.
     return SCREEN_PLAY;
   }
 
@@ -41,6 +43,8 @@ export function stageShot(name, world) {
     state.shiftLeft = 0;
     state.score = 860;
     state.served = 9;
+    state.attempts = 11;
+    state.perfects = 4;
     state.combo = 0;
     state.bestCombo = 5;
     state.stars = 2;

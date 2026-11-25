@@ -7,7 +7,7 @@
 // the game. Everything random flows from the one seeded source, so a seed
 // always plays the same shift.
 
-import { DIFFICULTY, FILLINGS, PRICE, SHIFT } from './config.js';
+import { DIFFICULTY, FILLINGS, INGREDIENTS, PRICE, RUSH, SHIFT } from './config.js';
 import { intBetween, pick } from './random.js';
 
 export const EVENT_SERVED = 1;
@@ -23,14 +23,41 @@ function difficultyAt(elapsed) {
   return row;
 }
 
-/** One random recipe: a bottom bun, some fillings, a top bun. */
+/** The shouty display name of an ingredient, for ticket notes. */
+function shoutName(id) {
+  const found = INGREDIENTS.find((entry) => entry.id === id);
+  return (found ? found.name : id).toUpperCase();
+}
+
+/**
+ * One random recipe: a bottom bun, some fillings, a top bun — plus, about
+ * half the time, a special request the ticket spells out in red. A DOUBLE
+ * order stacks two of its favourite filling back to back; a NO order is
+ * built without the named filling at all. Either way the recipe itself is
+ * the whole truth: the plate still has to match it layer for layer.
+ */
 function makeRecipe(random, elapsed) {
   const row = difficultyAt(elapsed);
   const count = intBetween(random, row.fillings[0], row.fillings[1]);
-  const recipe = ['bunB'];
-  for (let index = 0; index < count; index += 1) recipe.push(pick(random, FILLINGS));
-  recipe.push('bunT');
-  return recipe;
+  const fillings = [];
+  for (let index = 0; index < count; index += 1) fillings.push(pick(random, FILLINGS));
+  let note = null;
+  const roll = random();
+  if (roll < 0.24) {
+    const excluded = pick(random, ['cheese', 'onion', 'tomato', 'lettuce']);
+    const pool = FILLINGS.filter((filling) => filling !== excluded);
+    for (let index = 0; index < fillings.length; index += 1) {
+      if (fillings[index] === excluded) fillings[index] = pick(random, pool);
+    }
+    note = `NO ${shoutName(excluded)}`;
+  } else if (roll < 0.48) {
+    const doubled = pick(random, ['patty', 'cheese']);
+    const at = fillings.indexOf(doubled);
+    if (at === -1) fillings[0] = doubled;
+    fillings.splice(at === -1 ? 1 : at + 1, 0, doubled);
+    note = `DOUBLE ${shoutName(doubled)}`;
+  }
+  return { layers: ['bunB', ...fillings, 'bunT'], note };
 }
 
 /** What a finished burger pays before its tip: a base plus a price per layer. */
@@ -44,11 +71,14 @@ export function createWorld(random) {
     shiftLeft: SHIFT.seconds,
     score: 0,
     served: 0,
+    attempts: 0,
+    perfects: 0,
     combo: 0,
     bestCombo: 0,
     stars: SHIFT.stars,
     orders: [],
     plate: [],
+    platePop: 0,
     spawnIn: 0,
     over: false,
     fx: [],
@@ -59,16 +89,19 @@ export function createWorld(random) {
   function spawnOrder() {
     if (state.orders.length >= SHIFT.maxOrders || state.over) return;
     const row = difficultyAt(state.elapsed);
-    const recipe = makeRecipe(random, state.elapsed);
+    const { layers, note } = makeRecipe(random, state.elapsed);
     state.orders.push({
       id: nextOrderId,
-      recipe,
-      price: priceOf(recipe),
+      recipe: layers,
+      note,
+      price: priceOf(layers),
       patience: row.patience,
       patienceMax: row.patience,
     });
     nextOrderId += 1;
-    state.spawnIn = row.spawn * (0.75 + random() * 0.5);
+    // Rush time: in the last stretch the gap between arrivals shrinks.
+    const rush = state.shiftLeft <= RUSH.at && state.elapsed > 0 ? RUSH.spawnFactor : 1;
+    state.spawnIn = row.spawn * rush * (0.75 + random() * 0.5);
   }
 
   function addFx(text, x, y, colour) {
@@ -80,11 +113,14 @@ export function createWorld(random) {
     state.shiftLeft = SHIFT.seconds;
     state.score = 0;
     state.served = 0;
+    state.attempts = 0;
+    state.perfects = 0;
     state.combo = 0;
     state.bestCombo = 0;
     state.stars = SHIFT.stars;
     state.orders = [];
     state.plate = [];
+    state.platePop = 0;
     state.spawnIn = 0;
     state.over = false;
     state.fx = [];
@@ -93,21 +129,32 @@ export function createWorld(random) {
     spawnOrder();
   }
 
-  /** Put one ingredient on the plate. Returns false when the stack is full. */
+  /**
+   * Put one ingredient on the plate. Returns false when the stack is full.
+   * A successful drop also starts the little squash animation the renderer
+   * plays on the new top layer (`platePop` runs 1 → 0 in a fraction of a
+   * second, ticked down in step()).
+   */
   function addIngredient(id) {
     if (state.over || state.plate.length >= 9) return false;
     state.plate.push(id);
+    state.platePop = 1;
     return true;
   }
 
-  /** Take the top layer back off the plate. */
+  /**
+   * Take the top layer back off the plate: the mistake recovery. It costs
+   * nothing but the seconds it takes, which in a rush is cost enough.
+   */
   function undo() {
     state.plate.pop();
+    state.platePop = 0;
   }
 
   /** Throw the whole plate away; the combo survives, the layers do not. */
   function trash() {
     state.plate = [];
+    state.platePop = 0;
   }
 
   function sameRecipe(a, b) {
@@ -120,6 +167,7 @@ export function createWorld(random) {
    */
   function serve() {
     if (state.over || state.plate.length === 0) return 0;
+    state.attempts += 1;
     const index = state.orders.findIndex((order) => sameRecipe(order.recipe, state.plate));
     if (index === -1) {
       state.combo = 0;
@@ -127,7 +175,8 @@ export function createWorld(random) {
       return EVENT_WRONG;
     }
     const [order] = state.orders.splice(index, 1);
-    const tip = Math.round(PRICE.maxTip * (order.patience / order.patienceMax));
+    const fresh = order.patience / order.patienceMax;
+    const tip = Math.round(PRICE.maxTip * fresh);
     const gain = order.price + tip + Math.min(state.combo, 5) * 4;
     state.score += gain;
     state.lastGain = gain;
@@ -135,6 +184,12 @@ export function createWorld(random) {
     state.combo += 1;
     state.bestCombo = Math.max(state.bestCombo, state.combo);
     state.plate = [];
+    state.platePop = 0;
+    // An exact burger served while the customer is still fresh: PERFECT!
+    if (fresh >= PRICE.perfectFraction) {
+      state.perfects += 1;
+      addFx('PERFECT!', 640, 262, '#c07f13');
+    }
     addFx(`+$${gain}`, 640, 300, '#4d9e57');
     if (tip >= 20) addFx('Great tip!', 640, 336, '#c07f13');
     if (state.orders.length < 2) spawnOrder();
@@ -153,6 +208,7 @@ export function createWorld(random) {
       fx.y -= 26 * dt;
     }
     state.fx = state.fx.filter((fx) => fx.ttl > 0);
+    state.platePop = Math.max(0, state.platePop - dt * 3.2);
     if (attract || state.over) return events;
 
     state.elapsed += dt;
