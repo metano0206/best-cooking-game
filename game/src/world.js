@@ -1,0 +1,185 @@
+// The whole game as data and rules, with no drawing and no DOM: a shift of
+// burger orders. Customers arrive with a recipe (bottom bun, fillings, top
+// bun) and a patience bar; the player stacks the same layers on the plate and
+// rings the bell. An exact match is served for its price plus a tip that
+// shrinks as patience runs out; a customer whose patience empties walks out
+// and costs a star. Three walk-outs, or the shift clock reaching zero, ends
+// the game. Everything random flows from the one seeded source, so a seed
+// always plays the same shift.
+
+import { DIFFICULTY, FILLINGS, PRICE, SHIFT } from './config.js';
+import { intBetween, pick } from './random.js';
+
+export const EVENT_SERVED = 1;
+export const EVENT_WRONG = 2;
+export const EVENT_WALKOUT = 4;
+export const EVENT_OVER = 8;
+export const EVENT_ADDED = 16;
+
+/** The difficulty row in force at `elapsed` seconds into the shift. */
+function difficultyAt(elapsed) {
+  let row = DIFFICULTY[0];
+  for (const candidate of DIFFICULTY) if (elapsed >= candidate.at) row = candidate;
+  return row;
+}
+
+/** One random recipe: a bottom bun, some fillings, a top bun. */
+function makeRecipe(random, elapsed) {
+  const row = difficultyAt(elapsed);
+  const count = intBetween(random, row.fillings[0], row.fillings[1]);
+  const recipe = ['bunB'];
+  for (let index = 0; index < count; index += 1) recipe.push(pick(random, FILLINGS));
+  recipe.push('bunT');
+  return recipe;
+}
+
+/** What a finished burger pays before its tip: a base plus a price per layer. */
+function priceOf(recipe) {
+  return PRICE.base + PRICE.perLayer * recipe.length;
+}
+
+export function createWorld(random) {
+  const state = {
+    elapsed: 0,
+    shiftLeft: SHIFT.seconds,
+    score: 0,
+    served: 0,
+    combo: 0,
+    bestCombo: 0,
+    stars: SHIFT.stars,
+    orders: [],
+    plate: [],
+    spawnIn: 0,
+    over: false,
+    fx: [],
+    lastGain: 0,
+  };
+  let nextOrderId = 1;
+
+  function spawnOrder() {
+    if (state.orders.length >= SHIFT.maxOrders || state.over) return;
+    const row = difficultyAt(state.elapsed);
+    const recipe = makeRecipe(random, state.elapsed);
+    state.orders.push({
+      id: nextOrderId,
+      recipe,
+      price: priceOf(recipe),
+      patience: row.patience,
+      patienceMax: row.patience,
+    });
+    nextOrderId += 1;
+    state.spawnIn = row.spawn * (0.75 + random() * 0.5);
+  }
+
+  function addFx(text, x, y, colour) {
+    state.fx.push({ text, x, y, colour, ttl: 1.4 });
+  }
+
+  function reset() {
+    state.elapsed = 0;
+    state.shiftLeft = SHIFT.seconds;
+    state.score = 0;
+    state.served = 0;
+    state.combo = 0;
+    state.bestCombo = 0;
+    state.stars = SHIFT.stars;
+    state.orders = [];
+    state.plate = [];
+    state.spawnIn = 0;
+    state.over = false;
+    state.fx = [];
+    state.lastGain = 0;
+    nextOrderId = 1;
+    spawnOrder();
+  }
+
+  /** Put one ingredient on the plate. Returns false when the stack is full. */
+  function addIngredient(id) {
+    if (state.over || state.plate.length >= 9) return false;
+    state.plate.push(id);
+    return true;
+  }
+
+  /** Take the top layer back off the plate. */
+  function undo() {
+    state.plate.pop();
+  }
+
+  /** Throw the whole plate away; the combo survives, the layers do not. */
+  function trash() {
+    state.plate = [];
+  }
+
+  function sameRecipe(a, b) {
+    return a.length === b.length && a.every((layer, index) => layer === b[index]);
+  }
+
+  /**
+   * Ring the bell: serve the plate to the first order it matches exactly.
+   * Returns the events that happened (EVENT_SERVED or EVENT_WRONG).
+   */
+  function serve() {
+    if (state.over || state.plate.length === 0) return 0;
+    const index = state.orders.findIndex((order) => sameRecipe(order.recipe, state.plate));
+    if (index === -1) {
+      state.combo = 0;
+      addFx('No ticket matches!', 640, 300, '#d94f3d');
+      return EVENT_WRONG;
+    }
+    const [order] = state.orders.splice(index, 1);
+    const tip = Math.round(PRICE.maxTip * (order.patience / order.patienceMax));
+    const gain = order.price + tip + Math.min(state.combo, 5) * 4;
+    state.score += gain;
+    state.lastGain = gain;
+    state.served += 1;
+    state.combo += 1;
+    state.bestCombo = Math.max(state.bestCombo, state.combo);
+    state.plate = [];
+    addFx(`+$${gain}`, 640, 300, '#4d9e57');
+    if (tip >= 20) addFx('Great tip!', 640, 336, '#c07f13');
+    if (state.orders.length < 2) spawnOrder();
+    return EVENT_SERVED;
+  }
+
+  /**
+   * Advance the shift by `dt` seconds. With `attract` set, the kitchen idles
+   * for the title screen: orders hang on the board but nobody's patience
+   * moves and the clock stands still.
+   */
+  function step(dt, attract = false) {
+    let events = 0;
+    for (const fx of state.fx) {
+      fx.ttl -= dt;
+      fx.y -= 26 * dt;
+    }
+    state.fx = state.fx.filter((fx) => fx.ttl > 0);
+    if (attract || state.over) return events;
+
+    state.elapsed += dt;
+    state.shiftLeft = Math.max(0, SHIFT.seconds - state.elapsed);
+
+    state.spawnIn -= dt;
+    if (state.spawnIn <= 0) spawnOrder();
+
+    for (const order of [...state.orders]) {
+      order.patience -= dt;
+      if (order.patience <= 0) {
+        state.orders.splice(state.orders.indexOf(order), 1);
+        state.stars -= 1;
+        state.combo = 0;
+        events |= EVENT_WALKOUT;
+        addFx('Walked out!', 640, 300, '#d94f3d');
+        if (state.orders.length < 2) spawnOrder();
+      }
+    }
+
+    if (state.shiftLeft <= 0 || state.stars <= 0) {
+      state.over = true;
+      events |= EVENT_OVER;
+    }
+    return events;
+  }
+
+  reset();
+  return { state, reset, addIngredient, undo, trash, serve, step, spawnOrder };
+}
