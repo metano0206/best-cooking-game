@@ -27,16 +27,27 @@ export const INGREDIENTS = [
 /** Fillings a recipe may ask for between its two buns; patty and cheese come up most. */
 export const FILLINGS = ['patty', 'patty', 'cheese', 'cheese', 'lettuce', 'tomato', 'onion'];
 
-/** Recipe and patience growth over a shift: `at` is elapsed seconds. */
+/**
+ * Recipe and patience growth over a shift: `at` is elapsed seconds. Recipes
+ * keep growing to the end, but patience now eases off gently instead of
+ * falling off a cliff: the late shift still squeezes (shorter waits, faster
+ * arrivals), just not both at full strength at once, so a five-filling order
+ * at 90 seconds is hard rather than hopeless.
+ */
 export const DIFFICULTY = [
   { at: 0, fillings: [1, 2], patience: 36, spawn: 4.6 },
-  { at: 30, fillings: [2, 3], patience: 33, spawn: 4.2 },
-  { at: 60, fillings: [3, 4], patience: 30, spawn: 3.8 },
-  { at: 90, fillings: [3, 5], patience: 27, spawn: 3.4 },
+  { at: 30, fillings: [2, 3], patience: 34, spawn: 4.2 },
+  { at: 60, fillings: [3, 4], patience: 32, spawn: 3.9 },
+  { at: 90, fillings: [3, 5], patience: 30, spawn: 3.6 },
 ];
 
-/** Money: a flat price per layer, plus a tip that fades as patience runs out. */
-export const PRICE = { perLayer: 14, base: 12, maxTip: 30 };
+/**
+ * Money: a flat price per layer, plus a tip that fades as patience runs out.
+ * The top tip is generous on purpose: serving a fresh ticket fast should
+ * visibly out-earn serving it at the last second, so speed feels rewarded
+ * long before the combo bonus starts to matter.
+ */
+export const PRICE = { perLayer: 14, base: 12, maxTip: 38 };
 
 export const PALETTE = {
   wall: '#f3e2c7',
